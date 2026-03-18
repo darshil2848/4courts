@@ -25,12 +25,30 @@ def verify():
     token: str | None = request.args.get("hub.verify_token")
     challenge: str | None = request.args.get("hub.challenge")
 
-    if mode == "subscribe" and token == current_app.config["WA_WEBHOOK_VERIFY_TOKEN"]:
-        logger.info("Webhook verified by Meta")
-        return challenge, 200
+    expected_token: str = current_app.config["WA_WEBHOOK_VERIFY_TOKEN"]
 
-    logger.warning("Webhook verification failed – bad token or mode")
-    return jsonify({"error": "Forbidden"}), 403
+    if mode != "subscribe":
+        logger.warning(
+            "Webhook verification failed – unexpected hub.mode='%s' (expected 'subscribe')",
+            mode,
+        )
+        return jsonify({"error": "Forbidden"}), 403
+
+    if token != expected_token:
+        logger.warning(
+            "Webhook verification failed – hub.verify_token mismatch "
+            "(received %d chars, expected %d chars)",
+            len(token or ""),
+            len(expected_token),
+        )
+        return jsonify({"error": "Forbidden"}), 403
+
+    if not challenge:
+        logger.warning("Webhook verification failed – hub.challenge missing")
+        return jsonify({"error": "Forbidden"}), 403
+
+    logger.info("Webhook verified by Meta")
+    return challenge, 200
 
 
 # ─────────────────────────────────────────────────────────────────────────────
