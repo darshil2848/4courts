@@ -7,6 +7,13 @@ from flask import current_app, request
 logger = logging.getLogger(__name__)
 
 
+def _normalize_secret(secret: str) -> str:
+    cleaned = secret.strip()
+    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {'"', "'"}:
+        return cleaned[1:-1]
+    return cleaned
+
+
 def _parse_signature_header(signature_header: str) -> str | None:
     """Extract sha256 digest from X-Hub-Signature-256 header.
 
@@ -40,7 +47,7 @@ def verify_webhook_signature() -> bool:
         logger.warning("Webhook request missing X-Hub-Signature-256 header")
         return False
 
-    app_secret: str = current_app.config["WA_APP_SECRET"].strip()
+    app_secret: str = _normalize_secret(current_app.config["WA_APP_SECRET"])
     received = _parse_signature_header(signature_header)
     if not received:
         logger.warning("Webhook signature header malformed or non-sha256")
@@ -54,9 +61,12 @@ def verify_webhook_signature() -> bool:
 
     if not hmac.compare_digest(expected, received):
         logger.warning(
-            "Webhook signature mismatch – possible spoofed request (expected_len=%d received_len=%d)",
+            "Webhook signature mismatch – possible spoofed request (expected_len=%d received_len=%d body_len=%d expected_prefix=%s received_prefix=%s)",
             len(expected),
             len(received),
+            len(request.get_data(cache=True, as_text=False)),
+            expected[:8],
+            received[:8],
         )
         return False
 
