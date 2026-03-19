@@ -67,13 +67,6 @@ def verify():
     logger.info("Webhook verified by Meta")
     return challenge, 200
 
-    logger.warning(
-        "Webhook verification failed – unexpected hub.mode=%r (expected 'subscribe'); received args=%s",
-        mode,
-        dict(request.args),
-    )
-    return jsonify({"error": "Forbidden"}), 403
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # POST /webhook  – Incoming events from Meta
