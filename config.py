@@ -16,6 +16,9 @@ class Config:
     WA_WEBHOOK_VERIFY_TOKEN: str = os.environ["WHATSAPP_WEBHOOK_VERIFY_TOKEN"]
     WA_APP_SECRET: str = os.environ["WHATSAPP_APP_SECRET"]
 
+    # Playo Court Booking API
+    PLAYO_AUTH_TOKEN: str = os.environ["PLAYO_AUTH_TOKEN"]
+
     # Derived base URL – never hardcode version strings elsewhere
     @property
     def WA_BASE_URL(self) -> str:  # noqa: N802

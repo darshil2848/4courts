@@ -8,10 +8,12 @@ from typing import Any
 
 import requests
 
+from flask import current_app
+
 logger = logging.getLogger(__name__)
 
-_PLAYO_BASE_URL = "https://api.playo.io/controller/ppc/availability"
-_PLAYO_AUTH_TOKEN = "0147d6e0-22e0-11f1-b381-154507cf50fa:e64f4a38-dbd5-4271-bb11-1ff140a8ede1"
+_PLAYO_BASE_URL = "https://api.playo.io"
+_PLAYO_AVAILABILITY_ENDPOINT = "/controller/ppc/availability"
 _PLAYO_ACTIVITY_IDS = [14425]
 
 
@@ -76,10 +78,11 @@ def fetch_availability(date_str: str) -> list[dict]:
     Raises:
         PlayoError on non-2xx response or parse failure.
     """
+    auth_token: str = current_app.config["PLAYO_AUTH_TOKEN"]
     headers = {
         "accept": "application/json",
         "accept-language": "en-US,en-IN;q=0.9,en;q=0.8",
-        "authorization": _PLAYO_AUTH_TOKEN,
+        "authorization": auth_token,
         "content-type": "application/json",
         "origin": "https://dashboard.playo.club",
         "referer": "https://dashboard.playo.club/",
@@ -95,7 +98,7 @@ def fetch_availability(date_str: str) -> list[dict]:
 
     try:
         response = requests.post(
-            _PLAYO_BASE_URL,
+            _PLAYO_BASE_URL + _PLAYO_AVAILABILITY_ENDPOINT,
             headers=headers,
             json=payload,
             timeout=10,
