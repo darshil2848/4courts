@@ -42,9 +42,30 @@ def verify():
         "hub[challenge]",
     )
 
-    if mode == "subscribe" and token == current_app.config["WA_WEBHOOK_VERIFY_TOKEN"]:
-        logger.info("Webhook verified by Meta")
-        return challenge, 200
+    expected_token: str = current_app.config["WA_WEBHOOK_VERIFY_TOKEN"]
+
+    if mode != "subscribe":
+        logger.warning(
+            "Webhook verification failed – unexpected hub.mode='%s' (expected 'subscribe')",
+            mode,
+        )
+        return jsonify({"error": "Forbidden"}), 403
+
+    if token != expected_token:
+        logger.warning(
+            "Webhook verification failed – hub.verify_token mismatch "
+            "(received %d chars, expected %d chars)",
+            len(token or ""),
+            len(expected_token),
+        )
+        return jsonify({"error": "Forbidden"}), 403
+
+    if not challenge:
+        logger.warning("Webhook verification failed – hub.challenge missing")
+        return jsonify({"error": "Forbidden"}), 403
+
+    logger.info("Webhook verified by Meta")
+    return challenge, 200
 
     logger.warning(
         "Webhook verification failed – unexpected hub.mode=%r (expected 'subscribe'); received args=%s",
