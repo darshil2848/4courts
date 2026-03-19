@@ -1,12 +1,22 @@
 import logging
+import re
 
 from flask import Blueprint, current_app, jsonify, request
 
+from services.whatsapp_service import WhatsAppError, send_text
 from utils.security import verify_webhook_signature
 
 logger = logging.getLogger(__name__)
 
 webhook_bp = Blueprint("webhook", __name__)
+
+_GREETING_PATTERN = re.compile(r"\b(hi|hello|hey|hii|helo|hola)\b", re.IGNORECASE)
+_WELCOME_MESSAGE = (
+    "Welcome to 4courts!\n"
+    "Please select an option:\n"
+    "1) Todays available time slots\n"
+    "2) Tomorrows available time slots"
+)
 
 
 def _get_first_query_value(*keys: str) -> str | None:
@@ -15,6 +25,13 @@ def _get_first_query_value(*keys: str) -> str | None:
         if value is not None:
             return value
     return None
+
+
+def _is_greeting(text: str) -> bool:
+    normalized = text.strip().lower()
+    if not normalized:
+        return False
+    return bool(_GREETING_PATTERN.search(normalized))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -104,6 +121,17 @@ def _handle_messages(messages: list[dict]) -> None:
         if msg_type == "text":
             text = msg.get("text", {}).get("body", "")
             logger.info("Text message from %s: %s", sender, text)
+
+            if sender and _is_greeting(text):
+                try:
+                    send_text(sender, _WELCOME_MESSAGE)
+                    logger.info("Sent welcome options to %s", sender)
+                except WhatsAppError as exc:
+                    logger.exception(
+                        "Failed to send welcome options to %s (status=%s)",
+                        sender,
+                        exc.status_code,
+                    )
 
         elif msg_type == "image":
             media_id = msg.get("image", {}).get("id")
