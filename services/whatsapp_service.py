@@ -13,6 +13,8 @@ handle errors in a consistent way.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 from typing import Any
 
@@ -20,6 +22,21 @@ import requests
 from flask import current_app
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_secret(secret: str) -> str:
+    cleaned = secret.strip()
+    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {'"', "'"}:
+        return cleaned[1:-1]
+    return cleaned
+
+
+def _build_appsecret_proof(access_token: str, app_secret: str) -> str:
+    return hmac.new(
+        app_secret.encode("utf-8"),
+        access_token.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -40,10 +57,13 @@ class WhatsAppError(Exception):
 def _post(payload: dict) -> dict:
     """Execute a POST to the WhatsApp messages endpoint."""
     access_token: str = current_app.config["WA_ACCESS_TOKEN"]
+    app_secret: str = _normalize_secret(current_app.config["WA_APP_SECRET"])
     url: str = current_app.config["WA_BASE_URL"]
+    appsecret_proof: str = _build_appsecret_proof(access_token, app_secret)
 
     response = requests.post(
         url,
+        params={"appsecret_proof": appsecret_proof},
         headers={
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
@@ -53,7 +73,11 @@ def _post(payload: dict) -> dict:
     )
 
     if not response.ok:
-        raise WhatsAppError(response.status_code, response.json())
+        try:
+            detail: Any = response.json()
+        except ValueError:
+            detail = response.text
+        raise WhatsAppError(response.status_code, detail)
 
     return response.json()
 
