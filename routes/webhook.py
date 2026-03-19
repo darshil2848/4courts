@@ -1,5 +1,6 @@
 import logging
 import re
+from datetime import datetime, timedelta
 
 from flask import Blueprint, current_app, jsonify, request
 
@@ -9,6 +10,7 @@ from services.whatsapp_service import (
     send_reply_buttons,
     send_text,
 )
+from services.playo_service import PlayoError, get_slots_for_band
 from utils.security import verify_webhook_signature
 
 logger = logging.getLogger(__name__)
@@ -88,11 +90,78 @@ def _send_time_band_confirmation(sender: str, row_id: str) -> None:
     if not day_label or not band_label:
         return
 
-    send_text(
-        sender,
-        f"You selected {band_label} for {day_label}.\nPlease share preferred court details to continue.",
-    )
-    logger.info("Confirmed time-range selection to %s row_id=%s", sender, row_id)
+    # Compute date based on day selection
+    today = datetime.now().date()
+    if day_key == "today_slots":
+        target_date = today
+    elif day_key == "tomorrow_slots":
+        target_date = today + timedelta(days=1)
+    else:
+        send_text(sender, "Invalid date selection. Please try again.")
+        return
+
+    date_str = target_date.strftime("%Y-%m-%d")
+
+    # Fetch slots from Playo for the selected band
+    try:
+        slots = get_slots_for_band(date_str, band_key)
+        logger.info(
+            "Fetched %d slots for %s/%s",
+            len(slots),
+            day_label,
+            band_label,
+        )
+
+        if not slots:
+            send_text(
+                sender,
+                f"No slots available for {band_label} on {day_label}.",
+            )
+            return
+
+        # Build interactive list from slots
+        rows = []
+        for slot in slots[:10]:  # Limit to 10 (WhatsApp list max)
+            start_time = slot.get("startTime", "N/A")
+            end_time = slot.get("endTime", "N/A")
+            price = slot.get("price", "N/A")
+            slot_id = slot.get("id", "")
+
+            if not slot_id:
+                continue
+
+            rows.append(
+                {
+                    "id": f"{day_key}:{band_key}:{slot_id}",
+                    "title": f"{start_time} - {end_time}",
+                    "description": f"₹{price}",
+                }
+            )
+
+        if not rows:
+            send_text(sender, "Could not parse available slots.")
+            return
+
+        send_interactive_list(
+            sender,
+            body=f"Available slots for {band_label} on {day_label}:",
+            button_text="Pick a slot",
+            section_title="Time slots",
+            rows=rows,
+        )
+        logger.info("Sent slot list to %s (%d slots)", sender, len(rows))
+
+    except PlayoError as exc:
+        logger.exception(
+            "Playo API error for %s/%s (status=%s)",
+            day_label,
+            band_key,
+            exc.status_code,
+        )
+        send_text(
+            sender,
+            f"Could not fetch slots. Please try again later.",
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -232,14 +301,44 @@ def _handle_messages(messages: list[dict]) -> None:
                 )
 
                 if sender and row_id:
-                    try:
-                        _send_time_band_confirmation(sender, row_id)
-                    except WhatsAppError as exc:
-                        logger.exception(
-                            "Failed to send time-range confirmation to %s (status=%s)",
+                    # Check if this is a time-band selection (2 parts) or slot selection (3 parts)
+                    parts = row_id.split(":")
+                    if len(parts) == 2:
+                        # Time-band selection – fetch and show slots
+                        try:
+                            _send_time_band_confirmation(sender, row_id)
+                        except WhatsAppError as exc:
+                            logger.exception(
+                                "Failed to send time-range confirmation to %s (status=%s)",
+                                sender,
+                                exc.status_code,
+                            )
+                    elif len(parts) == 3:
+                        # Specific slot selection – confirm booking
+                        day_key, band_key, slot_id = parts
+                        day_label = _SLOT_LABELS.get(day_key, "")
+                        band_label = _TIME_BAND_CONFIRMATIONS.get(band_key, "")
+                        slot_time = row_title  # e.g. "10:00 - 11:00"
+                        logger.info(
+                            "Slot selection from %s: day=%s band=%s slot=%s time=%s",
                             sender,
-                            exc.status_code,
+                            day_key,
+                            band_key,
+                            slot_id,
+                            slot_time,
                         )
+                        try:
+                            send_text(
+                                sender,
+                                f"Great! You've selected {slot_time} for {band_label} on {day_label}.\n\nTo complete your booking, please share the following details:\n1. Your name\n2. Number of players\n3. Any special requirements",
+                            )
+                            logger.info("Sent booking confirmation to %s", sender)
+                        except WhatsAppError as exc:
+                            logger.exception(
+                                "Failed to send booking confirmation to %s (status=%s)",
+                                sender,
+                                exc.status_code,
+                            )
 
         elif msg_type == "image":
             media_id = msg.get("image", {}).get("id")
