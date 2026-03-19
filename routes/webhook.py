@@ -9,10 +9,19 @@ logger = logging.getLogger(__name__)
 webhook_bp = Blueprint("webhook", __name__)
 
 
+def _get_first_query_value(*keys: str) -> str | None:
+    for key in keys:
+        value = request.args.get(key)
+        if value is not None:
+            return value
+    return None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # GET /webhook  – Meta verification handshake
 # ─────────────────────────────────────────────────────────────────────────────
-@webhook_bp.get("/")
+@webhook_bp.get("", strict_slashes=False)
+@webhook_bp.get("/", strict_slashes=False)
 def verify():
     """Meta calls this once when you register the webhook URL.
 
@@ -21,22 +30,35 @@ def verify():
         hub.verify_token   – must match WHATSAPP_WEBHOOK_VERIFY_TOKEN
         hub.challenge      – echo this value back to confirm
     """
-    mode: str | None = request.args.get("hub.mode")
-    token: str | None = request.args.get("hub.verify_token")
-    challenge: str | None = request.args.get("hub.challenge")
+    mode: str | None = _get_first_query_value("hub.mode", "hub_mode", "hub[mode]")
+    token: str | None = _get_first_query_value(
+        "hub.verify_token",
+        "hub_verify_token",
+        "hub[verify_token]",
+    )
+    challenge: str | None = _get_first_query_value(
+        "hub.challenge",
+        "hub_challenge",
+        "hub[challenge]",
+    )
 
     if mode == "subscribe" and token == current_app.config["WA_WEBHOOK_VERIFY_TOKEN"]:
         logger.info("Webhook verified by Meta")
         return challenge, 200
 
-    logger.warning("Webhook verification failed – bad token or mode")
+    logger.warning(
+        "Webhook verification failed – unexpected hub.mode=%r (expected 'subscribe'); received args=%s",
+        mode,
+        dict(request.args),
+    )
     return jsonify({"error": "Forbidden"}), 403
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # POST /webhook  – Incoming events from Meta
 # ─────────────────────────────────────────────────────────────────────────────
-@webhook_bp.post("/")
+@webhook_bp.post("", strict_slashes=False)
+@webhook_bp.post("/", strict_slashes=False)
 def receive():
     """Receives all WhatsApp event notifications (messages, statuses, etc.)."""
     if not verify_webhook_signature():
