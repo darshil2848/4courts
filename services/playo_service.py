@@ -16,6 +16,17 @@ _PLAYO_BASE_URL = "https://api.playo.io"
 _PLAYO_AVAILABILITY_ENDPOINT = "/controller/ppc/availability"
 _PLAYO_ACTIVITY_IDS = [14425]
 
+# Shared session to maintain cookies across requests
+_session: requests.Session | None = None
+
+
+def _get_session() -> requests.Session:
+    """Get or create a persistent session with shared cookies."""
+    global _session
+    if _session is None:
+        _session = requests.Session()
+    return _session
+
 
 class PlayoError(Exception):
     """Raised when Playo API call fails."""
@@ -86,7 +97,15 @@ def fetch_availability(date_str: str) -> list[dict]:
         "content-type": "application/json",
         "origin": "https://dashboard.playo.club",
         "referer": "https://dashboard.playo.club/",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+        "priority": "u=1, i",
+        "sec-ch-ua": '"Chromium";v="146", "Not-A.Brand";v="24", "Google Chrome";v="146"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "cross-site",
+        "sec-fetch-storage-access": "active",
     }
 
     payload = {
@@ -97,7 +116,8 @@ def fetch_availability(date_str: str) -> list[dict]:
     }
 
     try:
-        response = requests.post(
+        session = _get_session()
+        response = session.post(
             _PLAYO_BASE_URL + _PLAYO_AVAILABILITY_ENDPOINT,
             headers=headers,
             json=payload,
