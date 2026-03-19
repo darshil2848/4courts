@@ -3,7 +3,12 @@ import re
 
 from flask import Blueprint, current_app, jsonify, request
 
-from services.whatsapp_service import WhatsAppError, send_text
+from services.whatsapp_service import (
+    WhatsAppError,
+    send_interactive_list,
+    send_reply_buttons,
+    send_text,
+)
 from utils.security import verify_webhook_signature
 
 logger = logging.getLogger(__name__)
@@ -11,12 +16,27 @@ logger = logging.getLogger(__name__)
 webhook_bp = Blueprint("webhook", __name__)
 
 _GREETING_PATTERN = re.compile(r"\b(hi|hello|hey|hii|helo|hola)\b", re.IGNORECASE)
-_WELCOME_MESSAGE = (
-    "Welcome to 4courts!\n"
-    "Please select an option:\n"
-    "1) Todays available time slots\n"
-    "2) Tomorrows available time slots"
-)
+_WELCOME_PROMPT = "Welcome to 4courts! Please select an option:"
+_WELCOME_BUTTONS = [
+    {"id": "today_slots", "title": "Today's slots"},
+    {"id": "tomorrow_slots", "title": "Tomorrow's slots"},
+]
+_SLOT_LABELS = {
+    "today_slots": "today",
+    "tomorrow_slots": "tomorrow",
+}
+_TIME_BANDS = [
+    ("morning", "Morning", "6am - 12pm"),
+    ("afternoon", "Afternoon", "12pm - 5pm"),
+    ("evening", "Evening", "5pm - 9pm"),
+    ("night", "Night", "9pm - 1am"),
+]
+_TIME_BAND_CONFIRMATIONS = {
+    "morning": "Morning (6am - 12pm)",
+    "afternoon": "Afternoon (12pm - 5pm)",
+    "evening": "Evening (5pm - 9pm)",
+    "night": "Night (9pm - 1am)",
+}
 
 
 def _get_first_query_value(*keys: str) -> str | None:
@@ -32,6 +52,47 @@ def _is_greeting(text: str) -> bool:
     if not normalized:
         return False
     return bool(_GREETING_PATTERN.search(normalized))
+
+
+def _send_slot_response(sender: str, button_id: str) -> None:
+    day_label = _SLOT_LABELS.get(button_id)
+    if not day_label:
+        return
+
+    rows = [
+        {
+            "id": f"{button_id}:{band_id}",
+            "title": band_title,
+            "description": band_window,
+        }
+        for band_id, band_title, band_window in _TIME_BANDS
+    ]
+
+    send_interactive_list(
+        sender,
+        body=f"Choose a time range for {day_label}:",
+        button_text="Select time",
+        section_title="Available time ranges",
+        rows=rows,
+    )
+    logger.info("Sent time-range list to %s for button_id=%s", sender, button_id)
+
+
+def _send_time_band_confirmation(sender: str, row_id: str) -> None:
+    if ":" not in row_id:
+        return
+
+    day_key, band_key = row_id.split(":", 1)
+    day_label = _SLOT_LABELS.get(day_key)
+    band_label = _TIME_BAND_CONFIRMATIONS.get(band_key)
+    if not day_label or not band_label:
+        return
+
+    send_text(
+        sender,
+        f"You selected {band_label} for {day_label}.\nPlease share preferred court details to continue.",
+    )
+    logger.info("Confirmed time-range selection to %s row_id=%s", sender, row_id)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -124,14 +185,61 @@ def _handle_messages(messages: list[dict]) -> None:
 
             if sender and _is_greeting(text):
                 try:
-                    send_text(sender, _WELCOME_MESSAGE)
-                    logger.info("Sent welcome options to %s", sender)
+                    send_reply_buttons(
+                        sender,
+                        body=_WELCOME_PROMPT,
+                        buttons=_WELCOME_BUTTONS,
+                    )
+                    logger.info("Sent welcome reply buttons to %s", sender)
                 except WhatsAppError as exc:
                     logger.exception(
                         "Failed to send welcome options to %s (status=%s)",
                         sender,
                         exc.status_code,
                     )
+
+        elif msg_type == "interactive":
+            interactive = msg.get("interactive", {})
+            if interactive.get("type") == "button_reply":
+                button_reply = interactive.get("button_reply", {})
+                button_id = button_reply.get("id", "")
+                button_title = button_reply.get("title", "")
+                logger.info(
+                    "Button reply from %s: id=%s title=%s",
+                    sender,
+                    button_id,
+                    button_title,
+                )
+
+                if sender and button_id:
+                    try:
+                        _send_slot_response(sender, button_id)
+                    except WhatsAppError as exc:
+                        logger.exception(
+                            "Failed to send slot response to %s (status=%s)",
+                            sender,
+                            exc.status_code,
+                        )
+            elif interactive.get("type") == "list_reply":
+                list_reply = interactive.get("list_reply", {})
+                row_id = list_reply.get("id", "")
+                row_title = list_reply.get("title", "")
+                logger.info(
+                    "List reply from %s: id=%s title=%s",
+                    sender,
+                    row_id,
+                    row_title,
+                )
+
+                if sender and row_id:
+                    try:
+                        _send_time_band_confirmation(sender, row_id)
+                    except WhatsAppError as exc:
+                        logger.exception(
+                            "Failed to send time-range confirmation to %s (status=%s)",
+                            sender,
+                            exc.status_code,
+                        )
 
         elif msg_type == "image":
             media_id = msg.get("image", {}).get("id")

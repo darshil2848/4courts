@@ -2,6 +2,8 @@
 
 Provides generic methods to send:
     - Text messages
+    - Interactive reply-button messages
+    - Interactive list messages
     - Image messages  (by URL or pre-uploaded media ID)
     - Video messages  (by URL or pre-uploaded media ID)
     - Document files  (by URL or pre-uploaded media ID)
@@ -129,6 +131,113 @@ def send_text(to: str, body: str, *, preview_url: bool = False) -> dict:
         "text": {"preview_url": preview_url, "body": body},
     }
     logger.debug("send_text to=%s", to)
+    return _post(payload)
+
+
+def send_reply_buttons(
+    to: str,
+    *,
+    body: str,
+    buttons: list[dict[str, str]],
+) -> dict:
+    """Send an interactive reply-button message.
+
+    Args:
+        to:      Recipient phone number in E.164 format.
+        body:    Prompt text displayed above the reply buttons.
+        buttons: Up to 3 items, each with keys: ``id`` and ``title``.
+
+    Returns:
+        The raw API response dict.
+    """
+    if not buttons or len(buttons) > 3:
+        raise ValueError("buttons must contain between 1 and 3 items")
+
+    interactive_buttons: list[dict] = []
+    for button in buttons:
+        button_id = button.get("id", "").strip()
+        title = button.get("title", "").strip()
+
+        if not button_id:
+            raise ValueError("Each button requires a non-empty 'id'")
+        if not title:
+            raise ValueError("Each button requires a non-empty 'title'")
+        if len(title) > 20:
+            raise ValueError("Each button title must be 20 characters or fewer")
+
+        interactive_buttons.append(
+            {
+                "type": "reply",
+                "reply": {"id": button_id, "title": title},
+            }
+        )
+
+    payload = {
+        **_base_payload(to),
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": body},
+            "action": {"buttons": interactive_buttons},
+        },
+    }
+    logger.debug("send_reply_buttons to=%s count=%d", to, len(interactive_buttons))
+    return _post(payload)
+
+
+def send_interactive_list(
+    to: str,
+    *,
+    body: str,
+    button_text: str,
+    section_title: str,
+    rows: list[dict[str, str]],
+) -> dict:
+    """Send an interactive list message.
+
+    Args:
+        to:            Recipient phone number in E.164 format.
+        body:          Prompt text displayed above the list.
+        button_text:   Text shown on the list opener button.
+        section_title: Title for the single list section.
+        rows:          1..10 rows, each containing ``id`` and ``title``.
+                       Optional ``description`` is also supported.
+
+    Returns:
+        The raw API response dict.
+    """
+    if not rows or len(rows) > 10:
+        raise ValueError("rows must contain between 1 and 10 items")
+
+    interactive_rows: list[dict] = []
+    for row in rows:
+        row_id = row.get("id", "").strip()
+        title = row.get("title", "").strip()
+        description = row.get("description", "").strip()
+
+        if not row_id:
+            raise ValueError("Each row requires a non-empty 'id'")
+        if not title:
+            raise ValueError("Each row requires a non-empty 'title'")
+
+        item: dict[str, str] = {"id": row_id, "title": title}
+        if description:
+            item["description"] = description
+        interactive_rows.append(item)
+
+    payload = {
+        **_base_payload(to),
+        "type": "interactive",
+        "interactive": {
+            "type": "list",
+            "body": {"text": body},
+            "action": {
+                "button": button_text,
+                "sections": [{"title": section_title, "rows": interactive_rows}],
+            },
+        },
+    }
+    logger.debug("send_interactive_list to=%s count=%d", to, len(interactive_rows))
     return _post(payload)
 
 
