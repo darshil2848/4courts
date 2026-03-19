@@ -6,6 +6,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
+import os
 import requests
 
 from flask import current_app
@@ -89,7 +90,9 @@ def fetch_availability(date_str: str) -> list[dict]:
     Raises:
         PlayoError on non-2xx response or parse failure.
     """
-    auth_token: str = current_app.config["PLAYO_AUTH_TOKEN"]
+    auth_token: str = os.environ.get("PLAYO_AUTH_TOKEN") or current_app.config["PLAYO_AUTH_TOKEN"]
+    if not auth_token:
+        raise PlayoError(500, "PLAYO_AUTH_TOKEN is not set")
     headers = {
         "accept": "application/json",
         "accept-language": "en-US,en-IN;q=0.9,en;q=0.8",
